@@ -17,8 +17,6 @@ from email.mime.multipart import MIMEMultipart
 
 
 
-
-
 @api_view(['POST'])
 def register_user(request):
     data = request.data
@@ -80,8 +78,8 @@ def send_otp(request):
 
     # Send OTP using Twilio
     try:
-        sender_email = "mustafahasnain19@gmail.com"
-        sender_password = "gkxfhwxkykdbvuhd"
+        sender_email = "bigybags@gmail.com"
+        sender_password = "ewpfolvcpyuddgwn"
         subject = "Your OTP Code"
         body = f"Your OTP code is {otp}"
 
