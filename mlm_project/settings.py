@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -87,27 +88,27 @@ WSGI_APPLICATION = 'mlm_project.wsgi.application'
 #     }
 # }
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'mlm_db',
-#         'USER': 'root',
-#         'PASSWORD': '12345',
-#         'HOST': 'localhost',
-#         'PORT': '3306',
-#     }
-# }
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'mustafahasnain19$mlm_db',
-        'USER': 'mustafahasnain19',
-        'PASSWORD': 'bigybags123',
-        'HOST': 'mustafahasnain19.mysql.pythonanywhere-services.com',
+        'NAME': 'mlm_db',
+        'USER': 'root',
+        'PASSWORD': '12345',
+        'HOST': 'localhost',
         'PORT': '3306',
     }
 }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'mustafahasnain19$mlm_db',
+#         'USER': 'mustafahasnain19',
+#         'PASSWORD': 'bigybags123',
+#         'HOST': 'mustafahasnain19.mysql.pythonanywhere-services.com',
+#         'PORT': '3306',
+#     }
+# }
 
 
 # Password validation
@@ -147,7 +148,25 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+# settings.py
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+# settings.py
+GOOGLE_DRIVE_CLIENT_ID = '1053826242484-6l8ibunhrvnvvequditfmjeh22sge7bn.apps.googleusercontent.com'
+GOOGLE_DRIVE_CLIENT_SECRET = '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'
+GOOGLE_DRIVE_REFRESH_TOKEN = 'your-refresh-token'
+GOOGLE_DRIVE_FOLDER_ID = 'your-folder-id'
+
+# Celery Configuration Options
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'

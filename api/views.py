@@ -1,9 +1,11 @@
 from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView    
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from rest_framework import status
-from .models import User, Referral, Product,Order, OrderDetail, Transaction, UserPoint, OTP
-from .serializers import UserSerializer, ReferralSerializer, ProductSerializer, OrderSerializer, TransactionSerializer, UserPointSerializer
+from rest_framework import status, generics
+from .models import User, Referral, Product,Order, OrderDetail, UserPoint, OTP, Ewallet, Transactions, Payout_Transaction, OrderTracking, Category, MonthlyPurchase, Statements, SubCategory,CommissionHistory
+from .serializers import UserSerializer, ReferralSerializer, ProductSerializer, OrderSerializer, OrderDetailSerializer, UserPointSerializer,EwalletSerializer,TransactionSerializer, PayoutTransactionSerializer, OrderTrackingSerializer, CategorySerializer, MonthlyPurchaseSerializer, StatementsSerializer, SubCategorySerializer, ComissionHistorySerializer
+from decimal import Decimal
 import random
 import string
 from django.core.mail import send_mail
@@ -14,8 +16,45 @@ import random
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import paypalrestsdk
+from paypalcheckoutsdk.orders import OrdersCreateRequest, OrdersCaptureRequest
+from paypalhttp import HttpError
+from .paypal import PayPalClient
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import permission_classes
+from django.conf import settings
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.oauth2.credentials import Credentials
+import os
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import mimetypes
+import io
+from googleapiclient.http import MediaIoBaseUpload
+from paypalrestsdk import Payout, ResourceNotFound
+import uuid
+from datetime import datetime
+from django.utils import timezone
+from .filters import ProductFilter
+from django_filters.rest_framework import DjangoFilterBackend
 
 
+
+
+
+
+
+SERVICE_ACCOUNT_FILE = 'analog-context-432718-m9-8085b2892f39.json'
+SCOPES = ['https://www.googleapis.com/auth/drive']
+
+
+
+paypalrestsdk.configure({
+  "mode": "sandbox",  # or "live" for production
+  "client_id": "AcfZegwsJHjZkBYFKkSAsNWTRDS3xF_7jjEr-bjMTxROkAj6Nlg1HVXyzIWIFb7Iujtex-uSMM_yTA1H",
+  "client_secret": "EBytr5RbE3xIWcirROf1I48hUcp9FP4IlNs-EQff4a3e2jEZ7JQMHqNnvCZKgg5JrLEc_tbZ7qnSQxHy"
+})
 
 @api_view(['POST'])
 def register_user(request):
@@ -53,7 +92,6 @@ def register_user(request):
         # send_welcome_email(email, first_name, user_referral_code)
         
         return Response(user_serializer.data, status=status.HTTP_201_CREATED)
-    
     return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
@@ -146,9 +184,11 @@ def retrieve_user(request):
     # Custom serialization to include referees_points
     referrals_data = []
     for referral in referrals:
-        referee_points = UserPoint.objects.filter(user=referral.referee).values('points').first()
+        referee_points = UserPoint.objects.filter(user=referral.referee).values('points','status').first()
+        print(referee_points)
         referral_data = ReferralSerializer(referral).data
         referral_data['referee_points'] = referee_points['points'] if referee_points else 0
+        referral_data['status'] = referee_points['status']
         referrals_data.append(referral_data)
 
     # Return the combined data
@@ -204,13 +244,50 @@ def get_products(request):
         serializer = ProductSerializer(products, many=True)
     return Response(serializer.data)
 
-@api_view(['POST'])
-def create_order(request):
-    serializer = OrderSerializer(data=request.data)
-    if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+@api_view(['GET'])
+def get_categories(request):
+    category = Category.objects.all().order_by('-id')
+    serializer = CategorySerializer(category, many=True)
+    return Response(serializer.data)
+
+@api_view(['GET'])
+def get_subCategories(request):
+    subcategory = SubCategory.objects.all()
+    serializer = SubCategorySerializer(subcategory, many=True)
+    return Response(serializer.data)
+
+@api_view(['GET'])
+def get_user_statements(request, user_id):
+    try:
+        current_month_statement = MonthlyPurchase.objects.filter(user_id=user_id).first()
+        current_month_statement_serialize = MonthlyPurchaseSerializer(current_month_statement).data
+        statements = CommissionHistory.objects.filter(user_id = user_id).all()
+        statements_serialize = ComissionHistorySerializer(statements, many=True).data
+        return Response(data={"current_month_statement":current_month_statement_serialize,"statements":statements_serialize},status=status.HTTP_200_OK)
+    except Exception as e:
+        # Handle exceptions and return an error response
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_current_statement(request, user_id):
+    try:
+        current_month_statement = MonthlyPurchase.objects.filter(user_id=user_id).first()
+        current_month_statement_serialize = MonthlyPurchaseSerializer(current_month_statement).data
+        return Response(data=current_month_statement_serialize)
+    except Exception as e:
+        # Handle exceptions and return an error response
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+# @api_view(['POST'])
+# def create_order(request):
+#     serializer = OrderSerializer(data=request.data)
+#     if serializer.is_valid():
+#         serializer.save()
+#         return Response(serializer.data, status=status.HTTP_201_CREATED)
+#     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
 def get_orders(request):
@@ -220,6 +297,35 @@ def get_orders(request):
         serializer = OrderSerializer(orders, many=True)
         return Response(serializer.data)
     return Response('ID Error',status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+def get_latest_order(request):
+    user_id = request.query_params.get('user_id')
+    if user_id:
+        order = Order.objects.filter(user_id=user_id).last()
+        if not order:
+            return Response({'error': 'No order found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = OrderSerializer(order)
+        return Response(serializer.data)
+    return Response('ID Error',status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+def get_order_tracking(request, order_id):
+    try:
+        order = Order.objects.get(pk=order_id)
+        tracking = OrderTracking.objects.get(order=order)
+        serializer = OrderTrackingSerializer(tracking)
+        return Response(serializer.data)
+    except Order.DoesNotExist:
+        return Response({"error": "Order not found"}, status=404)
+    except OrderTracking.DoesNotExist:
+        return Response({"error": "Tracking info not available"}, status=404)
+
+class OrderDetailView(generics.RetrieveAPIView):
+    queryset = Order.objects.all()
+    serializer_class = OrderSerializer
+    lookup_field = 'id'  # This tells DRF to use 'id' as the URL parameter    
 
 
 @api_view(['POST'])
@@ -232,7 +338,7 @@ def create_transaction(request):
 
 @api_view(['GET'])
 def get_transactions(request, user_id):
-    transactions = Transaction.objects.filter(user_id=user_id)
+    transactions = Transactions.objects.filter(user_id=user_id)
     serializer = TransactionSerializer(transactions, many=True)
     return Response(serializer.data)
 
@@ -302,6 +408,340 @@ def get_profile_data(request, user_id):
         return Response({'error': 'User not found'}, status=404)
     except UserPoint.DoesNotExist:
         return Response({'error': 'UserPoints not found for this user'}, status=404)
+    
+@api_view(['POST'])
+def add_funds(request):
+    user_id = request.data.get('user_id')
+    amount = request.data.get('amount')
+
+    # Integrate PayPal Payment Process
+    # Assuming PayPal SDK is already configured
+    payment = paypalrestsdk.Payment({
+        "intent": "sale",
+        "payer": {
+            "payment_method": "paypal"
+        },
+        "transactions": [{
+            "amount": {
+                "total": f"{amount}",
+                "currency": "USD"
+            },
+            "description": "Adding funds to eWallet"
+        }],
+        "redirect_urls": {
+            "return_url": "http://localhost:3000/success",
+            "cancel_url": "http://localhost:3000/cancel"
+        }
+    })
+
+    if payment.create():
+        # Save the transaction if payment is approved
+        ewallet = Ewallet.objects.get(user_id=user_id)
+        ewallet.balance += float(amount)
+        ewallet.save()
+
+        transaction = Transactions.objects.create(
+            user_id=user_id,
+            transaction_type='Deposit',
+            amount=amount,
+            status='Completed'
+        )
+
+        return Response({'payment': payment, 'message': 'Funds added successfully.'}, status=status.HTTP_200_OK)
+    else:
+        return Response({'message': 'Error occurred during the payment process.'}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+def make_purchase(request):
+    user_id = request.data.get('user_id')
+    amount = request.data.get('amount')
+
+    try:
+        ewallet = Ewallet.objects.get(user_id=user_id)
+
+        if ewallet.balance < amount:
+            return Response({'message': 'Insufficient funds.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Deduct the amount from eWallet balance
+        ewallet.balance -= amount
+        ewallet.save()
+
+        # Record the transaction
+        transaction = Transactions.objects.create(
+            user_id=user_id,
+            transaction_type='Purchase',
+            amount=amount,
+            status='Completed'
+        )
+
+        return Response({'message': 'Purchase successful.'}, status=status.HTTP_200_OK)
+    except Ewallet.DoesNotExist:
+        return Response({'message': 'Ewallet not found.'}, status=status.HTTP_404_NOT_FOUND)
+    
+@api_view(['POST'])
+def create_order(request):
+    user = User.objects.get(id=request.data['user'])  # Replace with actual user logic, like request.user
+    serializer = OrderSerializer(data=request.data)
+    
+    if serializer.is_valid():
+        order = serializer.save()
+
+        transaction_id = request.data.get('transaction_id')
+        if not transaction_id:
+            return Response({"error": "Transaction ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if this transaction has already been captured
+        if Transactions.objects.filter(transaction_id=transaction_id, status='completed').exists():
+            return Response({
+                "order_id": order.id,
+                "transaction_id": transaction_id,
+                "message": "Payment already captured."
+            }, status=status.HTTP_200_OK)
+
+        try:
+            transaction = Transactions.objects.create(
+                user=user,
+                order=order,
+                transaction_id=transaction_id,
+                amount=order.total_amount,
+                status='completed'
+            )
+
+            return Response({
+                "order_id": order.id,
+                "transaction_id": transaction.transaction_id,
+                "message": "Payment completed successfully."
+            }, status=status.HTTP_200_OK)
+
+        except HttpError as error:
+            return Response({"error": str(error)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+def get_drive_service():
+    # Create credentials using service account
+    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    return build('drive', 'v3', credentials=creds)
+
+def create_folder(service, folder_name, parent_id=None):
+    # Create a folder in Google Drive
+    file_metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder',
+    }
+    if parent_id:
+        file_metadata['parents'] = [parent_id]
+    
+    folder = service.files().create(body=file_metadata, fields='id').execute()
+    return folder.get('id')
+
+@api_view(['POST'])
+def upload_files(request):
+    # Validate required fields
+    if 'userId' not in request.data or 'idProof' not in request.FILES or 'addressProof' not in request.FILES:
+        return Response({'error': 'userId, idProof, and addressProof are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user_id = request.data['userId']
+    id_proof = request.FILES['idProof']
+    address_proof = request.FILES['addressProof']
+
+    try:
+        # Initialize Google Drive service
+        service = get_drive_service()
+
+        # Create a folder in Google Drive named after the userId
+        folder_id = create_folder(service, user_id)
+
+        def upload_file(file):
+            # Determine the MIME type
+            mime_type, _ = mimetypes.guess_type(file.name)
+            if not mime_type:
+                mime_type = 'application/octet-stream'
+
+            # Read file content
+            file_stream = io.BytesIO(file.read())
+            media = MediaIoBaseUpload(file_stream, mimetype=mime_type)
+
+            file_metadata = {
+                'name': file.name,
+                'parents': [folder_id]
+            }
+            uploaded_file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+            return uploaded_file.get('id')
+
+        # Upload the ID Proof and Address Proof files
+        id_proof_id = upload_file(id_proof)
+        address_proof_id = upload_file(address_proof)
+
+        # Return the IDs of the uploaded files
+        return Response({
+            'folderId': folder_id,
+            'idProofFileId': id_proof_id,
+            'addressProofFileId': address_proof_id
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        # Handle exceptions and return an error response
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)    
+    
+@api_view(['POST'])
+def redeem_points(request):
+    user_id = request.data.get('user_id')
+    points_to_redeem = int(request.data.get('points'))
+    payout_email = request.data.get('paypal_email')
+
+    # Retrieve user's points based on user_id from the request body
+    try:
+        user = User.objects.get(id=user_id)
+        user_points = user.user_points
+    except User.DoesNotExist:
+        return Response({"error": "User not found."}, status=status.HTTP_400_BAD_REQUEST)
+    except UserPoint.DoesNotExist:
+        return Response({"error": "User has no points."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Check if the user has enough points
+    if points_to_redeem > user_points.points:
+        return Response({"error": "Not enough points."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Example: 100 points = 1 unit of currency
+    conversion_rate = 0.01
+    amount_to_pay = points_to_redeem * conversion_rate
+
+    # Generate a unique sender_batch_id using UUID and timestamp
+    unique_batch_id = f"batch_{user_id}_{uuid.uuid4()}_{int(datetime.now().timestamp())}"
+
+    # Create the PayPal payout
+    payout = Payout({
+        "sender_batch_header": {
+            "sender_batch_id": unique_batch_id,
+            "email_subject": "You have a payout!",
+        },
+        "items": [{
+            "recipient_type": "EMAIL",
+            "amount": {
+                "value": f"{amount_to_pay:.2f}",
+                "currency": "USD"
+            },
+            "receiver": payout_email,
+            "note": "Thanks for your patronage!",
+            "sender_item_id": f"item_{user_id}",
+        }]
+    })
+
+    if payout.create():
+        # Deduct points
+        user_points.points -= points_to_redeem
+        user_points.save()
+
+        # Save transaction
+        transaction = Payout_Transaction.objects.create(
+            user=user,
+            points_redeemed=points_to_redeem,
+            amount=amount_to_pay,
+            transaction_id=payout.batch_header.payout_batch_id,
+            status='completed'
+        )
+
+        return Response(PayoutTransactionSerializer(transaction).data, status=status.HTTP_200_OK)
+    else:
+        # Print the error details from the PayPal response
+        error_details = payout.error
+        print("Payout failed:", error_details)
+        
+        return Response({
+            "error": "Payout failed.",
+            "details": error_details
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+
+@api_view(['GET'])
+def transaction_dashboard(request, user_id):
+    # Fetch user transactions
+    transactions = Transactions.objects.filter(user_id=user_id)
+    transactions_data = TransactionSerializer(transactions, many=True).data
+
+    # Fetch user payout transactions
+    payout_transactions = Payout_Transaction.objects.filter(user_id=user_id)
+    payout_data = PayoutTransactionSerializer(payout_transactions, many=True).data
+    # Fetch user points
+    try:
+        user_points = UserPoint.objects.get(user_id=user_id)
+        user_points_data = UserPointSerializer(user_points).data
+    except UserPoint.DoesNotExist:
+        user_points_data = None
+
+    response_data = {
+        "transactions": transactions_data,
+        "payout_transactions": payout_data,
+        "user_points": user_points_data
+    }
+
+    return Response(response_data)
+
+class ResetMonthlyDataView(APIView):
+    """
+    API endpoint to reset monthly data.
+    """
+    def post(self, request):
+        try:
+            # Call the function to reset monthly data
+            self.reset_monthly_data()
+            return Response({"message": "Monthly data reset completed successfully."}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def reset_monthly_data(self):
+        # Get the current month
+        current_month = timezone.now().month
+
+        # Fetch all MonthlyPurchase records for processing
+        monthly_purchases = MonthlyPurchase.objects.all()
+
+        for monthly_purchase in monthly_purchases:
+            user = monthly_purchase.user
+
+            # Calculate cumulative commission and store it in history
+            if monthly_purchase.cumulative_purchase > 0:
+                # Check for the highest commission percentage earned
+                commission_percentage = self.get_commission_percentage(monthly_purchase)
+
+                # Create a new CommissionHistory record to store this month's data
+                CommissionHistory.objects.create(
+                    user=user,
+                    commission_percentage=commission_percentage,
+                    cumulative_purchase=monthly_purchase.cumulative_purchase,
+                    cumulative_points=monthly_purchase.cumulative_points
+                )
+
+            # Reset purchases and cumulative points for the new month
+            monthly_purchase.user_purchase = 0
+            monthly_purchase.referral_purchase = 0
+            monthly_purchase.group_purchase = 0
+            monthly_purchase.cumulative_points = 0
+
+            # If user reaches a new commission tier, reset cumulative_purchase to 0
+            if commission_percentage > Decimal('3.00'):  # If user has exceeded 3%, start fresh for the next tier
+                monthly_purchase.cumulative_purchase = 0
+            monthly_purchase.save()
+
+    def get_commission_percentage(self, monthly_purchase):
+        # Determine the commission percentage based on the rules
+        if monthly_purchase.cumulative_purchase >= 34000:
+            return Decimal('12.00')
+        elif monthly_purchase.cumulative_purchase >= 9600:
+            return Decimal('9.00')
+        elif monthly_purchase.cumulative_purchase >= 1400:
+            return Decimal('6.00')
+        elif monthly_purchase.cumulative_purchase >= 400:
+            return Decimal('3.00')
+        return Decimal('0.00')
+    
+class ProductListView(generics.ListAPIView):
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializer
+    filter_backends = (DjangoFilterBackend,)
+    filterset_class = ProductFilter
+
 
 def generate_referral_code(phone_no):
     last_digits = phone_no[-4:]
