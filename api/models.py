@@ -234,5 +234,5 @@ class Payout_Transaction(models.Model):
     points_redeemed = models.PositiveIntegerField()
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     transaction_id = models.CharField(max_length=100)
-    status = models.CharField(max_length=50, default='completed')
+    status = models.CharField(max_length=50, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)

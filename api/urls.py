@@ -25,12 +25,12 @@ urlpatterns = [
     path('profile/<int:user_id>/', views.get_profile_data, name='get_profile_data'),
     path('add_funds/', views.add_funds, name='add_funds'),
     path('upload_files/', views.upload_files, name='upload_files'),
-    path('redeem_points/',views.redeem_points, name='redeem_points'),
+    path('redeem_points/',views.request_withdrawal, name='redeem_points'),
     path('transaction_dashboard/<int:user_id>/', views.transaction_dashboard, name='transaction_dashboard'),
     path('get_user_statements/<int:user_id>/', views.get_user_statements, name='get_user_statements'),
     path('get_current_statement/<int:user_id>/', views.get_current_statement, name='get_current_statement'),
     path('reset-monthly-data/', views.ResetMonthlyDataView.as_view(), name='reset-monthly-data'),
     path('products-search/', views.ProductListView.as_view(), name='product-list'),
-
-
+    path('ewallet/<int:user_id>/', views.EwalletByUserView.as_view(), name='ewallet-by-user'),
+    path('get_graph_data/<int:user_id>/', views.get_user_and_referrals_purchases, name='get_graph_data'),
 ]

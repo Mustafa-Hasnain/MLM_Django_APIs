@@ -38,6 +38,8 @@ from datetime import datetime
 from django.utils import timezone
 from .filters import ProductFilter
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import transaction
+
 
 
 
@@ -380,6 +382,13 @@ def get_user_points(request):
         user_points_data = {}
 
     return Response(user_points_data, status=status.HTTP_200_OK)
+class EwalletByUserView(generics.RetrieveAPIView):
+    queryset = Ewallet.objects.all()
+    serializer_class = EwalletSerializer
+
+    def get_object(self):
+        user_id = self.kwargs.get('user_id')
+        return get_object_or_404(Ewallet, user__id=user_id)
 
 @api_view(['GET'])
 def get_profile_data(request, user_id):
@@ -584,74 +593,122 @@ def upload_files(request):
         # Handle exceptions and return an error response
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)    
     
+# @api_view(['POST'])
+# def redeem_points(request):
+#     user_id = request.data.get('user_id')
+#     points_to_redeem = int(request.data.get('points'))
+#     payout_email = request.data.get('paypal_email')
+
+#     # Retrieve user's points based on user_id from the request body
+#     try:
+#         user = User.objects.get(id=user_id)
+#         user_points = user.user_points
+#     except User.DoesNotExist:
+#         return Response({"error": "User not found."}, status=status.HTTP_400_BAD_REQUEST)
+#     except UserPoint.DoesNotExist:
+#         return Response({"error": "User has no points."}, status=status.HTTP_400_BAD_REQUEST)
+
+#     # Check if the user has enough points
+#     if points_to_redeem > user_points.points:
+#         return Response({"error": "Not enough points."}, status=status.HTTP_400_BAD_REQUEST)
+
+#     # Example: 100 points = 1 unit of currency
+#     conversion_rate = 0.01
+#     amount_to_pay = points_to_redeem * conversion_rate
+
+#     # Generate a unique sender_batch_id using UUID and timestamp
+#     unique_batch_id = f"batch_{user_id}_{uuid.uuid4()}_{int(datetime.now().timestamp())}"
+
+#     # Create the PayPal payout
+#     payout = Payout({
+#         "sender_batch_header": {
+#             "sender_batch_id": unique_batch_id,
+#             "email_subject": "You have a payout!",
+#         },
+#         "items": [{
+#             "recipient_type": "EMAIL",
+#             "amount": {
+#                 "value": f"{amount_to_pay:.2f}",
+#                 "currency": "USD"
+#             },
+#             "receiver": payout_email,
+#             "note": "Thanks for your patronage!",
+#             "sender_item_id": f"item_{user_id}",
+#         }]
+#     })
+
+#     if payout.create():
+#         # Deduct points
+#         user_points.points -= points_to_redeem
+#         user_points.save()
+
+#         # Save transaction
+#         transaction = Payout_Transaction.objects.create(
+#             user=user,
+#             points_redeemed=points_to_redeem,
+#             amount=amount_to_pay,
+#             transaction_id=payout.batch_header.payout_batch_id,
+#             status='completed'
+#         )
+
+#         return Response(PayoutTransactionSerializer(transaction).data, status=status.HTTP_200_OK)
+#     else:
+#         # Print the error details from the PayPal response
+#         error_details = payout.error
+#         print("Payout failed:", error_details)
+        
+#         return Response({
+#             "error": "Payout failed.",
+#             "details": error_details
+#         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 @api_view(['POST'])
-def redeem_points(request):
+def request_withdrawal(request):
     user_id = request.data.get('user_id')
-    points_to_redeem = int(request.data.get('points'))
+    withdraw_amount = float(request.data.get('amount'))
     payout_email = request.data.get('paypal_email')
 
-    # Retrieve user's points based on user_id from the request body
-    try:
-        user = User.objects.get(id=user_id)
-        user_points = user.user_points
-    except User.DoesNotExist:
-        return Response({"error": "User not found."}, status=status.HTTP_400_BAD_REQUEST)
-    except UserPoint.DoesNotExist:
-        return Response({"error": "User has no points."}, status=status.HTTP_400_BAD_REQUEST)
+    # Start a transaction to ensure atomicity
+    with transaction.atomic():
+        try:
+            # Retrieve user and eWallet balance
+            user = User.objects.get(id=user_id)
+            ewallet = user.ewallet
 
-    # Check if the user has enough points
-    if points_to_redeem > user_points.points:
-        return Response({"error": "Not enough points."}, status=status.HTTP_400_BAD_REQUEST)
+            # Validate the withdrawal amount
+            if withdraw_amount <= 0:
+                return Response({"error": "Invalid withdrawal amount."}, status=status.HTTP_400_BAD_REQUEST)
+            if withdraw_amount > ewallet.balance:
+                return Response({"error": "Insufficient balance."}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Example: 100 points = 1 unit of currency
-    conversion_rate = 0.01
-    amount_to_pay = points_to_redeem * conversion_rate
+            # Deduct the amount from eWallet
+            original_balance = ewallet.balance
+            ewallet.balance -= withdraw_amount
+            ewallet.save()
 
-    # Generate a unique sender_batch_id using UUID and timestamp
-    unique_batch_id = f"batch_{user_id}_{uuid.uuid4()}_{int(datetime.now().timestamp())}"
+            # Create a payout transaction with 'Pending' status
+            transaction_id = f"txn_{user_id}_{uuid.uuid4()}"
+            payout_transaction = Payout_Transaction.objects.create(
+                user=user,
+                points_redeemed=0,  # This can be adjusted based on your points system
+                amount=withdraw_amount,
+                transaction_id=transaction_id,
+                status='pending'
+            )
 
-    # Create the PayPal payout
-    payout = Payout({
-        "sender_batch_header": {
-            "sender_batch_id": unique_batch_id,
-            "email_subject": "You have a payout!",
-        },
-        "items": [{
-            "recipient_type": "EMAIL",
-            "amount": {
-                "value": f"{amount_to_pay:.2f}",
-                "currency": "USD"
-            },
-            "receiver": payout_email,
-            "note": "Thanks for your patronage!",
-            "sender_item_id": f"item_{user_id}",
-        }]
-    })
+            # Return the created transaction details
+            return Response(PayoutTransactionSerializer(payout_transaction).data, status=status.HTTP_200_OK)
 
-    if payout.create():
-        # Deduct points
-        user_points.points -= points_to_redeem
-        user_points.save()
+        except User.DoesNotExist:
+            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Save transaction
-        transaction = Payout_Transaction.objects.create(
-            user=user,
-            points_redeemed=points_to_redeem,
-            amount=amount_to_pay,
-            transaction_id=payout.batch_header.payout_batch_id,
-            status='completed'
-        )
+        except Ewallet.DoesNotExist:
+            return Response({"error": "Ewallet not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        return Response(PayoutTransactionSerializer(transaction).data, status=status.HTTP_200_OK)
-    else:
-        # Print the error details from the PayPal response
-        error_details = payout.error
-        print("Payout failed:", error_details)
-        
-        return Response({
-            "error": "Payout failed.",
-            "details": error_details
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            # Rollback any changes if an error occurs
+            transaction.set_rollback(True)
+            return Response({"error": f"Error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
 
 @api_view(['GET'])
@@ -741,6 +798,53 @@ class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
     filter_backends = (DjangoFilterBackend,)
     filterset_class = ProductFilter
+
+
+@api_view(['GET'])
+def get_user_and_referrals_purchases(request, user_id):
+    try:
+        # Get the user
+        user = User.objects.get(id=user_id)
+        
+        # Fetch the user's last 10 purchases
+        user_purchases = Order.objects.filter(user=user).order_by('created_at')[:10]
+        user_purchase_data = [
+            {
+                'amount': order.total_amount,
+                'date': order.created_at,
+                'user': f"{user.first_name} {user.last_name}",
+            }
+            for order in user_purchases
+        ]
+        
+        # Get all active referrals of the user
+        referrals = Referral.objects.filter(referrer=user, isActive=True).values_list('referee', flat=True)
+        
+        # Fetch the latest 10 purchases across all referrals
+        referral_purchases = Order.objects.filter(user__in=referrals).order_by('created_at')[:10]
+        referral_purchase_data = [
+            {
+                'amount': order.total_amount,
+                'date': order.created_at,
+                'user': f"{order.user.first_name} {order.user.last_name}",
+                'referral': True
+            }
+            for order in referral_purchases
+        ]
+
+        # Combine both datasets
+        combined_data = {
+            'user_purchases': user_purchase_data,
+            'referral_purchases': referral_purchase_data
+        }
+        
+        return Response(combined_data, status=status.HTTP_200_OK)
+    
+    except User.DoesNotExist:
+        return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 def generate_referral_code(phone_no):

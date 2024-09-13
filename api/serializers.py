@@ -14,10 +14,9 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # Create the User instance
         user = User.objects.create(**validated_data)
-        
         # Automatically create a UserPoint instance associated with the User
         UserPoint.objects.create(user=user, points=100, status='Executive')
-        
+        Ewallet.objects.create(user=user, balance=0.00)
         return user       
 
 
