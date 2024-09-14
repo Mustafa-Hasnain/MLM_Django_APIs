@@ -88,27 +88,27 @@ WSGI_APPLICATION = 'mlm_project.wsgi.application'
 #     }
 # }
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'mlm_db',
-        'USER': 'root',
-        'PASSWORD': '12345',
-        'HOST': 'localhost',
-        'PORT': '3306',
-    }
-}
-
 # DATABASES = {
 #     'default': {
 #         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'mustafahasnain19$mlm_db',
-#         'USER': 'mustafahasnain19',
-#         'PASSWORD': 'bigybags123',
-#         'HOST': 'mustafahasnain19.mysql.pythonanywhere-services.com',
+#         'NAME': 'mlm_db',
+#         'USER': 'root',
+#         'PASSWORD': '12345',
+#         'HOST': 'localhost',
 #         'PORT': '3306',
 #     }
 # }
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'mustafahasnain19$mlm_db',
+        'USER': 'mustafahasnain19',
+        'PASSWORD': 'bigybags123',
+        'HOST': 'mustafahasnain19.mysql.pythonanywhere-services.com',
+        'PORT': '3306',
+    }
+}
 
 
 # Password validation
