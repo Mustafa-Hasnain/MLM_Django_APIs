@@ -63,11 +63,11 @@ class ComissionHistorySerializer(serializers.ModelSerializer):
 
 class OrderDetailSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
+    product_image_url = serializers.URLField(source='product.image_url', read_only=True)
 
     class Meta:
         model = OrderDetail
-        fields = ['product_name','product', 'quantity', 'price']  # Exclude 'order' here
-
+        fields = ['product_name','product', 'quantity', 'price','product_image_url']  # Exclude 'order' here
 class OrderTrackingSerializer(serializers.ModelSerializer):
     order_details = OrderDetailSerializer(source='order.order_details', many=True, read_only=True)
 
@@ -264,6 +264,11 @@ class OrderSerializer(serializers.ModelSerializer):
         user_points.points += order.total_amount
         user_points.save()
 
+        referral = Referral.objects.get(referee=order.user)
+        referral.isActive = True
+        referral.updated_at = timezone.now()
+        referral.save()
+
         # Get or create MonthlyPurchase entry for the user
         monthly_purchase, created = MonthlyPurchase.objects.get_or_create(user=order.user)
         monthly_purchase.user_purchase += order.total_amount
@@ -275,6 +280,10 @@ class OrderSerializer(serializers.ModelSerializer):
         # Check if the user has a referrer
         referral = Referral.objects.filter(referee=order.user).first()
         if referral:
+            referrer_points = UserPoint.objects.get(user=referral.referrer)
+            referrer_points.referral_points += order.total_amount  # 100% of order amount
+            referrer_points.save()
+            
             # Update referrer's monthly purchases
             referrer_monthly_purchase, created = MonthlyPurchase.objects.get_or_create(user=referral.referrer)
             referrer_monthly_purchase.referral_purchase += order.total_amount

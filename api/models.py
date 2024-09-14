@@ -39,6 +39,40 @@ class MonthlyPurchase(models.Model):
         self.group_purchase = self.user_purchase + self.referral_purchase
         self.save()
 
+    # def update_cumulative_purchase_and_commission(self):
+    #     # Set minimum thresholds for each commission percentage
+    #     thresholds = {
+    #         Decimal('12.00'): {'user_min': 100, 'referral_min': 24300},
+    #         Decimal('9.00'): {'user_min': 100, 'referral_min': 8100},
+    #         Decimal('6.00'): {'user_min': 100, 'referral_min': 900},
+    #         Decimal('3.00'): {'user_min': 100, 'referral_min': 300},
+    #     }
+
+    #     # Determine the new commission percentage based on user and referral purchases
+    #     previous_commission_percentage = self.commission_percentage
+    #     commission_percentage = Decimal('0.00')
+
+    #     # Check for each threshold starting from the highest percentage
+    #     for percentage, values in sorted(thresholds.items(), reverse=True):
+    #         if self.user_purchase >= values['user_min'] and self.referral_purchase >= values['referral_min']:
+    #             commission_percentage = percentage
+    #             break
+
+    #     # Update cumulative purchase and points based on commission percentage
+    #     if commission_percentage > previous_commission_percentage:
+    #         # If commission level increased, add current group purchase to the previous cumulative purchase
+    #         self.cumulative_purchase += self.group_purchase
+    #     elif commission_percentage == Decimal('3.00'):
+    #         # If at the base level (3%), cumulative is simply the group purchase
+    #         self.cumulative_purchase = self.group_purchase
+
+    #     # Update cumulative points
+    #     self.cumulative_points = self.cumulative_purchase / Decimal('1.5')
+
+    #     # Store the updated commission percentage
+    #     self.commission_percentage = commission_percentage
+    #     self.save()
+
     def update_cumulative_purchase_and_commission(self):
         # Set minimum thresholds for each commission percentage
         thresholds = {
@@ -60,18 +94,20 @@ class MonthlyPurchase(models.Model):
 
         # Update cumulative purchase and points based on commission percentage
         if commission_percentage > previous_commission_percentage:
-            # If commission level increased, add current group purchase to the previous cumulative purchase
-            self.cumulative_purchase += self.group_purchase
-        elif commission_percentage == Decimal('3.00'):
-            # If at the base level (3%), cumulative is simply the group purchase
-            self.cumulative_purchase = self.group_purchase
+            # If commission percentage increased, set group purchase to cumulative purchase
+            self.group_purchase = self.cumulative_purchase
+
+        # Always set cumulative purchase to group purchase for each commission level
+        self.cumulative_purchase = self.group_purchase
 
         # Update cumulative points
-        self.cumulative_points = self.cumulative_purchase / Decimal('1.5')
+        self.cumulative_points = self.cumulative_purchase // Decimal('1.5')
 
         # Store the updated commission percentage
         self.commission_percentage = commission_percentage
         self.save()
+
+    
 
 class CommissionHistory(models.Model):
     user = models.ForeignKey(User, related_name='commission_history', on_delete=models.CASCADE)

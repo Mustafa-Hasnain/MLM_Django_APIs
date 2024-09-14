@@ -261,11 +261,13 @@ def get_subCategories(request):
 @api_view(['GET'])
 def get_user_statements(request, user_id):
     try:
+        user = User.objects.get(id=user_id)
+        referrals_count = Referral.objects.filter(referrer=user).count()
         current_month_statement = MonthlyPurchase.objects.filter(user_id=user_id).first()
         current_month_statement_serialize = MonthlyPurchaseSerializer(current_month_statement).data
         statements = CommissionHistory.objects.filter(user_id = user_id).all()
         statements_serialize = ComissionHistorySerializer(statements, many=True).data
-        return Response(data={"current_month_statement":current_month_statement_serialize,"statements":statements_serialize},status=status.HTTP_200_OK)
+        return Response(data={"current_month_statement":current_month_statement_serialize,"statements":statements_serialize,"referral_counts":referrals_count},status=status.HTTP_200_OK)
     except Exception as e:
         # Handle exceptions and return an error response
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -295,10 +297,10 @@ def get_current_statement(request, user_id):
 def get_orders(request):
     user_id = request.query_params.get('user_id')
     if user_id:
-        orders = Order.objects.filter(user_id=user_id)
+        orders = Order.objects.filter(user_id=user_id).prefetch_related('order_details__product').order_by('-created_at')  # Prefetch product data
         serializer = OrderSerializer(orders, many=True)
         return Response(serializer.data)
-    return Response('ID Error',status=status.HTTP_400_BAD_REQUEST)
+    return Response('ID Error', status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
 def get_latest_order(request):
@@ -398,17 +400,20 @@ def get_profile_data(request, user_id):
         user_serializer = UserSerializer(user)
 
         # Get the number of referrals made by this user
+        referee_data = Referral.objects.filter(referee=user).first()
         referrals_count = Referral.objects.filter(referrer=user).count()
-
         # Get the user points data
         user_points = UserPoint.objects.get(user=user)
         user_points_serializer = UserPointSerializer(user_points)
-
+        referee_serializer = ReferralSerializer(referee_data).data
+        referer_data = User.objects.get(id=referee_serializer['referrer'])
+        user_referer_serializer = UserSerializer(referer_data)
         # Combine the data
         profile_data = {
             'user': user_serializer.data,
             'referrals_count': referrals_count,
-            'user_points': user_points_serializer.data
+            'user_points': user_points_serializer.data,
+            'referrer_details': user_referer_serializer.data
         }
 
         return Response(profile_data)
